@@ -1,0 +1,306 @@
+---
+title: "R에서 남한지도 그려보기"
+author: "김병건"
+date: '2019 9 7 '
+header-includes:
+  - \usepackage{kotex}
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: pdflatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# 필요한 패키지 설치
+```{r}
+# install.packages('tidyverse')
+# install.packages('sf')
+```
+
+```{r}
+library(tidyverse)
+# select() 함수
+
+library(sf)
+# sf_read() 함수, shape file을 읽어 오는대 사용함
+```
+
+# 남한지도를 그려보겠습니다.
+
+동(또는 면/리)단위로 구역이 나뉘어진 지도입니다.
+
+```{r}
+dongs_shp <- st_read('map_data/TL_SCCO_EMD.shp')
+dongs_shp %>%
+  select(EMD_ENG_NM) %>%
+  plot()
+```
+
+# 지도를 그리기 위해서 알아야할 내용들
+
+지도를 그리기 위해서는 우선, 지도를 구성하고 있는 데이터에 대해서 알아야 합니다.
+
+* 지도 데이터, shape file 에 대한 설명은 아래를 링크를 참고하세요.
+ * https://endofcap.tistory.com/3
+ * http://www.snpo.kr/data//file/meetshare_epilogue/2949849334_CGywx7W5_slide3.pdf
+
+shape file만 올바르게 작성되어 있다면, 위에서 보신 것 과 같이 쉽게 지도를 그릴 수 있씁니다.
+
+* shape file 다운 받은 곳
+ * http://www.gisdeveloper.co.kr/?p=2332&unapproved=28711&moderation-hash=bf738becd6dd0f8b10fd61503ceb93e7#comment-28711
+
+## 지도 데이터(shape file)의 기본구조
+
+EMD_CD : 법정동 코드의 시/도 + 군/구 + 동 코드입니다.
+* 법정동 코드는 아래 링크 참고하세요.
+* https://financedata.github.io/posts/korea-area-code.html
+
+EMD_ENG_NM : 동 영문 표기
+EMD_KOR_NM : 동 한글 표기 (cp949로 인코딩 되어 있어서, UTF-8에서 올바르게 표기 되지 않았습니다. 뒤에서 UTF-8으로 변환 하겠습니다.)
+geometry : 동의 좌표를 가지고 있는 부분입니다.
+
+shape file은 현재 'Simple feature'라른 이름으로 ISO에서 표준화한 포맷이 되었습니다.
+
+```{r}
+class(dongs_shp)
+dongs_shp
+```
+
+## 지도 데이터 클리닝
+
+EMD_KOR_NM 인코딩을 CP949에서 UTF-8로 변경해서, 깨진 한글을 복구합니다.
+
+```{r}
+dongs_shp$EMD_KOR_NM <- iconv(dongs_shp$EMD_KOR_NM, from = "CP949", to = "UTF-8", sub = NA, mark = TRUE, toRaw = FALSE)
+head(dongs_shp)
+```
+
+
+# 지도 데이터를, 데이터프레임으로 변환
+
+shape file의 포맷은 주로 사용해왔던 데이터프레임과 함께 다루기가 어렵기 때문에, shape file을 데이터 프레임으로 변환합니다.
+
+## shape file에서 데이터 프레임으로
+
+shape file의 데이터 dongs_shp에서 geometry컬럼 부분, 즉 spatial 부분만 뽑아 냅니다.
+```{r}
+dongs_spatial <-  as(dongs_shp, 'Spatial')
+class(dongs_spatial)
+```
+dongs_seoul_spatial 의 안을 보면, data 와 polygons 둘로 나뉘어 있습니다.
+
+* data 부분이 데이터 프레임으로 법정동코드, 동이름, 을 담고 있고
+* polygons는 동의 모습을 폴리곤으로 담고 있습니다.
+
+두 부분을 각각 아래와 같이 변환 합니다.
+
+```{r}
+dongs_data_df <- as.data.frame(dongs_spatial)
+head(dongs_data_df)
+```
+
+```{r}
+dongs_geometry_df <- fortify(dongs_spatial)
+head(dongs_geometry_df)
+```
+## 2개의 데이터프레임 클리닝
+
+### dongs_data_df에 id 컬럼을 추가
+* dongs_data_df 와 dongs_geometry_df를 연결하여 사용할 때, 필요한 id 컬럼을 만들겠습니다.
+* EMD_CD를 charater 로 변경하겠습니다.
+* EMD_ENG_NM charater 로 변경하겠습니다.
+
+```{r}
+dongs_data_df$id <- 1:nrow(dongs_data_df)
+dongs_data_df = transform(dongs_data_df, 
+                          EMD_CD = as.character(EMD_CD))
+dongs_data_df = transform(dongs_data_df, 
+                          EMD_ENG_NM = as.character(EMD_ENG_NM))
+head(dongs_data_df)
+```
+### 법정동 코드 8자리에서 10자리로 변경
+EMD_CD컬럼이 법정동 코드를 의미합니다. 법정동 코드는 총 10자리로 구성된 숫자이며, 아래와 같이 조합합니다.
+
+"시/도" + "시/군/구" + "읍/면/동" + "리"
+
+EMD_CD컬럼은 읍/면/동 코드까지 가진 8자리로 예상됩니다.
+8자리가 맞는지 확인해보고, 뒤에 00을 붙여서, 총 10자리인 법정동 코드로 변경하겠습니다.
+
+```{r}
+bjd_code <- unique(dongs_data_df$EMD_CD)
+# 중복된 법정동 코드를 제외하고, bjd_code에 저장
+
+bjd_code_len <- nchar(bjd_code)
+# bjd_code의 각 아이템별로, 길이를 재고
+
+unique(bjd_code_len)
+# 잰 길이중에 중복을 재거하면
+# 8로 모두 길이가 8인것이 확인됨
+```
+
+모두 8자리 이기 때문에, 뒤에 00을 붙여 줍니다.
+
+```{r}
+dongs_data_df$EMD_CD = str_trim(dongs_data_df$EMD_CD, side='both')
+dongs_data_df$EMD_CD = paste0(dongs_data_df$EMD_CD, '00')
+head(dongs_data_df)
+```
+
+### dongs_data_df에 id 컬럼 타입을 숫자형으로 변환
+
+dongs_geometry_df의 id 컬럼 타입을 숫자형으로 변환합니다.
+```{r}
+dongs_geometry_df = transform(dongs_geometry_df, 
+                              id = as.integer(id) )
+head(dongs_geometry_df)
+```
+## 2개의 데이터프레임 저장하기
+
+```{r}
+write.csv(dongs_data_df, 'south_korea_dong_code_201905.csv')
+write.csv(dongs_geometry_df, 'south_korea_dong_map_201905.csv')
+```
+
+
+# 지도 그리기
+앞에서 shape file에서 데이터를 추출해서, 클리닝을 한 뒤에 csv 파일로 저장하였습니다.
+CSV파일에서 데이터를 읽어와서, 지도를 그려보겠습니다.
+
+## 동이름, 동 지도 데이터 읽기
+
+```{r}
+dongs_data_df = read.csv('south_korea_dong_code_201905.csv')
+dongs_geometry_df = read.csv('south_korea_dong_map_201905.csv')
+```
+
+factor로 되어 있는것을 character로 변환합니다.
+```{r}
+dongs_data_df = transform(dongs_data_df, 
+                          EMD_CD = as.character(EMD_CD))
+dongs_data_df = transform(dongs_data_df, 
+                          EMD_ENG_NM = as.character(EMD_ENG_NM))
+dongs_data_df = transform(dongs_data_df, 
+                          EMD_KOR_NM = as.character(EMD_KOR_NM))
+head(dongs_data_df)
+```
+
+```{r}
+head(dongs_geometry_df)
+```
+## 첫 지도 그리기
+
+동별로 나뉘어진 첫 지도 그리기 :-)
+
+```{r}
+p <- ggplot(data = dongs_geometry_df, aes(x = long, y = lat, group = id)) +
+  geom_path(color = 'black', size = .5)
+p
+```
+
+### 좀더 예쁜 지도로
+
+* 지도의 삐쭉 나온 선들은 가려지지가 않네요 -_-;
+* 동별로 색도 칠해 봅니다. geom_polygon 의 aes(fill = id)
+* 가로/세로 비율이 같은 지도를 그리기 coord_fixed(1)
+
+```{r}
+p <- ggplot(data = dongs_geometry_df, aes(x = long, y = lat, group = id)) +
+  geom_polygon(aes(group = group, fill = id)) +
+  geom_path(color = 'black', size = .5) +
+  coord_fixed(1)
+p
+```
+
+
+```{r}
+
+```
+
+### 서울/종로구 데이터만 뽑아서 사용하겠습니다. (전국 데이터는 너무 커서)
+
+데이터를 뽑기 위해서, 2개의 데이터프레임을 합치고, 법정동 코드에서, 서울/종로구 데이터만 필터합니다.
+
+```{r}
+dongs_df = merge(dongs_data_df, dongs_geometry_df, by.x = 'id', by.y = 'id')
+
+dongs_11110_df <- dongs_df %>% filter(substr(EMD_CD, 1, 5) == '11110')
+head(dongs_11110_df)
+```
+### 서울/종로구 동이름도 함께
+
+id,EMD_KOR_NM 로 group_by를 하면, 각 동,동이름별로 데이터가 그룹이 되고,
+동이름을 표시할 위도/경도를, 동의 외곽을 구성하는 점들의 위도/경도의 평균으로 정합니다.
+```{r}
+dong_name <- dongs_11110_df %>%
+  group_by(id, EMD_KOR_NM) %>%
+  summarise(long = mean(long), lat = mean(lat))
+```
+
+```{r warning=FALSE}
+p <- ggplot(data = dongs_11110_df, aes(x = long, y = lat, group = id)) +
+  geom_polygon(aes(group = group, fill = id)) +
+  geom_path(color = 'black', size = .5) +
+  geom_text(aes(label = EMD_KOR_NM), data = dong_name, size = 3) +
+  coord_fixed(1)
+
+p
+```
+
+### 보다 큰 크기로 그리기 (작아서 잘 안보임)
+
+```{r fig.width = 15, fig.height = 15, warning=FALSE}
+p <- ggplot(data = dongs_11110_df, aes(x = long, y = lat, group = id)) +
+  geom_polygon(aes(group = group, fill = id)) +
+  geom_path(color = 'black', size = .5) +
+  geom_text(aes(label = EMD_KOR_NM), data = dong_name, size = 3) +
+  coord_fixed(1)
+
+p
+```
+
+### 동옆에 바차트 그리기
+geom_rect()를 사용해서, 지도위에 위도/경도에 해당하는 사각형을 그려서, 바차트 용도로 사용하였습니다.
+
+* geom_subplot() 이 동작안하는 것 같은대, 잘 되시는 분은 연락 주세요 ^^
+
+```{r fig.width = 15, fig.height = 15, warning=FALSE}
+barwidth = 1 * 20
+barheight = 0.75 * 10
+
+p <- ggplot(data = dongs_11110_df, aes(x = long, y = lat, group = id)) +
+  geom_polygon(aes(group = group, fill = id)) +
+  geom_path(color = 'black', size = .5) +
+  geom_rect(data = dong_name,
+              aes(xmin = long - barwidth,
+                  xmax = long + barwidth,
+                  ymin = lat,
+                  max = lat + id*barheight),
+                  color = 'blue', alpha = 0.5) +
+  geom_rect(data = dong_name,
+              aes(xmin = long + (barwidth * 2),
+                  xmax = long + (barwidth * 4),
+                  ymin = lat,
+                  max = lat + id*barheight,),
+                  color = 'red', alpha = 0.5) +
+  geom_text(aes(label = EMD_KOR_NM), data = dong_name, size = 3) +
+  coord_fixed(1)
+
+p
+```
+
+# 마무리 하며
+
+R로 만들어 볼까? 했던 것이 있어서, kormap2014을 사용하면 되겠지... 하면서 시작 했다가,
+이런저런 이유로, kormap2014을 사용하기가 어렵게 되면서... 일이 점점 커지다가...
+결국은 shape file에서 부터 직접 그리게 되었습니다. :-)
+
+R에서 지도 그리시는 분들에게 도움이 되셨기를 바라며, 이만 마치겠습니다.
+
+
+김병건 (skysign at_sign gmail.com)
+2019년 9월 7일
