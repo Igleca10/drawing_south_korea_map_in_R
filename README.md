@@ -12,3 +12,8 @@ kormap, kormap2014 패키지를 사용할 수 도 있지만, 5년전 지도 데�
 
 ## 예제) 서울 종로구 동이름/바차트
 ![서울 종로구](Seoul_Jongno-gu.png)
+
+# 지도 데이터 파일 출처
+- map_data/EMD_201905.zip
+ - 대한민국 최신 행정구역(SHP) 다운로드 / 읍면동 2019년 5월 업데이트 다운로드
+  - http://www.gisdeveloper.co.kr/?p=2332&unapproved=28711&moderation-hash=bf738becd6dd0f8b10fd61503ceb93e7#comment-28711
